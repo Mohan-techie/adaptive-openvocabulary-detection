@@ -51,13 +51,13 @@ def pseudo_labels(teacher_preds, files, thr):
     return out
 
 
-def student_predict(weights, files, bs=16):
+def student_predict(weights, files, bs=16, imgsz=None):
     from ultralytics import YOLO
     m = YOLO(weights)
     out = {}
     for i in range(0, len(files), bs):
         chunk = files[i:i + bs]
-        for f, r in zip(chunk, m.predict(chunk, imgsz=C.STUDENT_IMGSZ, conf=0.001, iou=0.7, max_det=300,
+        for f, r in zip(chunk, m.predict(chunk, imgsz=imgsz or C.STUDENT_IMGSZ, conf=0.001, iou=0.7, max_det=300,
                                          device="cpu", verbose=False)):
             out[f] = (r.boxes.data.cpu().numpy().astype(np.float32), tuple(r.orig_shape))
     return out
