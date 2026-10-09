@@ -1,0 +1,77 @@
+\section{Problem Formulation and Method}
+\subsection{Setting}
+Let $\mathcal{U}$ be a pool of unlabeled images from the target domain, $\mathcal{C}$ a known set of $K$ class names, and $N\ge 0$ the number of images that can be fully annotated (all boxes, all classes). The labeled set $\mathcal{L}_N\subset\mathcal{U}$ is nested across budgets, $\mathcal{L}_{N}\subset\mathcal{L}_{N'}$ for $N<N'$. A \emph{strategy} $s$ maps $(\mathcal{U},\mathcal{L}_N,\mathcal{C})$ to a detector, and we measure its accuracy $a_s(N)$ as mAP on a held-out set, together with its annotation cost $c_{\text{ann}}(N)$ and compute cost.
+
+\subsection{Candidate strategies}
+\textbf{ZS (zero-shot).} An open-vocabulary detector $T$ (the \emph{teacher}) is prompted with one fixed text phrase per class. It needs no labels, so $a_{\text{ZS}}(N)$ is constant in $N$, and its test-time cost is that of $T$.
+
+\textbf{FT (fine-tuning).} A COCO-pretrained closed-set detector $S$ (the \emph{student}) is fine-tuned on $\mathcal{L}_N$ only (undefined for $N=0$).
+
+\textbf{TS (teacher--student).} $T$ labels every image in $\mathcal{U}\setminus\mathcal{L}_N$; detections with confidence $\ge\tau$ become pseudo-boxes, and $S$ is trained on $\mathcal{L}_N$ (gold) $\cup\ (\mathcal{U}\setminus\mathcal{L}_N)$ (pseudo). With $N=0$ this is pure distillation of the zero-shot teacher into a faster student, with no manual labels.
+
+\textbf{TS-cal (proposed).} Identical to TS except that $\tau$ is chosen from a small grid $\mathcal{T}$ to maximize micro-$F_1$ at IoU~0.5 of the \emph{teacher's} predictions on $\mathcal{L}_N$:
+\begin{equation}
+\tau^\star(N)=\arg\max_{\tau\in\mathcal{T}} F_1\big(T_{\ge\tau};\mathcal{L}_N\big),
+\end{equation}
+falling back to the default $\tau_0$ when $N=0$. This costs no extra annotation and no extra training: the labeled images that fine-tuning would consume are reused as a calibration set for the teacher.
+
+\subsection{Cost model}
+Annotation time for $N$ images is modeled as
+\begin{equation}
+c_{\text{ann}}(N)=N\,(t_{\text{img}}+\bar b\,t_{\text{box}}),
+\end{equation}
+where $\bar b$ is the mean number of boxes per image in the domain (measured), $t_{\text{img}}=5$\,s of viewing time and $t_{\text{box}}$ the per-box drawing time. Because per-box times in the literature range from several seconds~\cite{papadopoulos2017extreme} to tens of seconds~\cite{su2012crowdsourcing}, we treat $t_{\text{box}}\in\{5,10,35\}$\,s as a sensitivity range rather than a measurement. Pseudo-labels are assumed to cost no human time.
+
+\subsection{Learning-curve strategy selector}
+For each learned strategy $s\in\{\text{TS},\text{TS-cal},\text{FT}\}$ the practitioner observes accuracy at a few small pilot budgets $N_1<\dots<N_m$ (cheap, because small $N$ means small training sets). We fit
+\begin{equation}
+\text{loglin: } a_s(N)=\alpha_s+\beta_s\ln N,\qquad
+\text{power: } a_s(N)=\alpha_s-\beta_s N^{-\gamma_s},
+\end{equation}
+and extrapolate to the target budget $N$. The zero-shot accuracy is a constant measured on the labeled pilot set. The selector recommends
+\begin{equation}
+\hat s(N)=\arg\max_{s}\ \hat a_s(N)-\lambda\, h_s(N),
+\end{equation}
+where $h_s$ is a cost in hours and $\lambda\ge0$ trades accuracy against cost ($\lambda=0$ in our evaluation, which isolates the accuracy prediction). Section~\ref{sec:selector} measures how often $\hat s(N)$ matches the strategy that is best in hindsight and how much accuracy is lost when it does not (\emph{regret}).
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[node distance=3mm and 5mm, every node/.style={font=\scriptsize}, box/.style={draw,rounded corners=2pt,align=center,inner sep=2pt,minimum height=7mm}]
+\node[box] (u) {Unlabeled\\pool $\mathcal{U}$};
+\node[box,right=of u] (t) {Teacher $T$\\(zero-shot)};
+\node[box,right=of t] (p) {Pseudo-labels\\$\ge\tau^\star$};
+\node[box,right=of p] (s) {Student $S$\\(YOLO11n)};
+\node[box,below=of t] (l) {Labeled\\$\mathcal{L}_N$};
+\node[box,below=of p] (c) {Calibrate $\tau$\\(max $F_1$)};
+\node[box,below=of s] (sel) {Curve-based\\selector};
+\draw[-{Stealth}] (u)--(t); \draw[-{Stealth}] (t)--(p); \draw[-{Stealth}] (p)--(s);
+\draw[-{Stealth}] (l)--(c); \draw[-{Stealth}] (t.south east)--(c.north west); \draw[-{Stealth}] (c)--(p);
+\draw[-{Stealth}] (l.east)--++(0,0)|-(s.south west);
+\draw[-{Stealth}] (s)--(sel);
+\end{tikzpicture}
+\caption{Overview. Labeled images supervise the student directly (FT/TS) and calibrate the teacher's pseudo-label threshold (TS-cal); accuracy at small pilot budgets feeds the selector.}
+\label{fig:overview}
+\end{figure}
+
+\section{Experimental Setup}
+\textbf{Datasets.} We use two public detection datasets distributed with the Ultralytics package~\cite{ultralyticsdatasets}, chosen because they differ in how closely their label spaces match natural-language object names. \emph{HomeObjects-3K}: 12 household categories (bed, sofa, chair, \dots), 2\,285 training and 404 validation images. \emph{Construction-PPE}: 11 categories including both equipment (helmet, vest, \dots) and absence classes (no\_helmet, no\_goggle, \dots) that are hard to express as a noun phrase; 1\,132 training, 143 validation and 141 test images. We evaluate on the validation split (HomeObjects) and validation+test (PPE, 284 images). The retail checkout dataset RPC~\cite{wei2019rpc} originally planned for this project was not accessible in our offline-restricted environment, so we do not report retail results.
+
+\textbf{Models.} Teacher/zero-shot: YOLOE-11s~\cite{wang2025yoloe} with MobileCLIP text prompts, inference at $640$\,px. Student/fine-tuned: YOLO11n~\cite{jocher2024yolo11} initialised from COCO~\cite{lin2014coco} weights, trained and tested at $320$\,px. The text prompt per class was fixed before running any experiment (Table~\ref{tab:prompts}) and never tuned. Grounding~DINO and OWLv2 weights were not accessible to us; replacing the teacher with them is a drop-in change (\texttt{src/aovd/detectors.py}).
+
+\textbf{Budgets and seeds.} For every seed we draw a random unlabeled pool of $400$ training images and take the first $N\in\{10,25,50,100,200,400\}$ images of a seeded permutation as the labeled subset (nested). TS and TS-cal use the whole pool (gold labels for $\mathcal{L}_N$, teacher pseudo-labels for the rest); FT uses $\mathcal{L}_N$ only. Thresholds: $\tau_0=0.25$, $\mathcal{T}=\{0.10,0.25,0.40\}$.
+
+\textbf{Training protocol.} Every student run gets the same compute: 4\,800 image visits (e.g., 480 epochs for $N{=}10$ and 12 epochs for $N{=}400$), AdamW selected by the Ultralytics `auto' rule, batch 16, default augmentations, on CPU (4 cores shared by two concurrent jobs). Matching compute rather than epochs avoids favoring strategies with larger training sets.
+
+\textbf{Metrics.} A single evaluator (COCO-style 101-point AP, IoU $0.50{:}0.95$, class-averaged, confidence threshold $0.001$, NMS IoU $0.7$) scores every method on the same images. We report mAP$_{50}$ and mAP$_{50:95}$ as mean$\pm$std over seeds.
+
+\begin{table}[t]
+\caption{Fixed zero-shot text prompts (dataset label $\rightarrow$ prompt, when different).}
+\label{tab:prompts}
+\centering\footnotesize
+\begin{tabular}{p{0.9in}p{2.3in}}
+\toprule
+HomeObjects & tv$\rightarrow$``television''; all other class names used verbatim\\
+Construction-PPE & helmet$\rightarrow$``hard hat''; vest$\rightarrow$``safety vest''; goggles$\rightarrow$``safety goggles''; none$\rightarrow$``person without protective equipment''; no\_helmet$\rightarrow$``head without helmet''; no\_goggle$\rightarrow$``face without goggles''; no\_gloves$\rightarrow$``bare hand''; no\_boots$\rightarrow$``bare foot''; gloves, boots, Person verbatim\\
+\bottomrule
+\end{tabular}
+\end{table}

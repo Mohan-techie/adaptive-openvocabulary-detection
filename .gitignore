@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+datasets/*
+!datasets/README.md
+models/*
+!models/README.md
+runs/
+work/
+*.pt
+*.ts
+*.zip
+paper/*.aux
+paper/*.log
+paper/*.out
+paper/*.blg
+paper/*.bbl
+.env
