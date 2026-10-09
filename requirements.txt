@@ -1,0 +1,10 @@
+torch
+torchvision
+ultralytics>=8.4
+numpy
+scipy
+matplotlib
+openai-clip      # tokenizer only (used by the MobileCLIP text encoder wrapper)
+ftfy
+regex
+setuptools<81    # clip imports pkg_resources
